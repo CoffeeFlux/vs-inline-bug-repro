@@ -1,6 +1,9 @@
-// Minimization: repro_lambda_shadow.cpp without the wrap() template — the
-// lambda is invoked directly. Tests whether the template instantiation is a
-// required ingredient or a plain lambda suffices.
+// Crashes the MSVC front end: fatal error C1001 (compiler file 'msc1.cpp',
+// line 1589), cl.exe exiting with 0xC0000005. Reproduced on cl 19.44.35228
+// (VS 2022 17.14, toolset 14.44) through cl 19.51.36252 (VS 2026, toolset
+// 14.51) with `cl /std:c++20 /EHsc /c repro.cpp` at any optimization level.
+//
+// Found in https://github.com/TypesettingTools/Aegisub/pull/666.
 
 #include <filesystem>
 
@@ -16,7 +19,7 @@ public:
 const char *get_mode(const char *path) {
 	return [=]() -> const char * {
 		using enum sfs::file_type;
-		switch (sfs::status(agi::fs::path(path)).type()) {
+		switch (sfs::status(agi::fs::path(path)).type()) { // C1001 on this line
 			case not_found: return nullptr;
 			case regular:   return "file";
 			case directory: return "directory";

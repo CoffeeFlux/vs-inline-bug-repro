@@ -13,17 +13,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The toolset the ICE was reported against: VS 2022 17.14 / MSVC 19.44.
-          - label: vs2022-toolset-14.44
+          # The toolset the ICE was reported against: VS 2022 17.14 / cl 19.44.
+          - label: msvc-14.44
             runner: windows-2022
             toolset: '14.44'
-          # Same 14.44 toolset family as shipped on the VS 2026 image
-          # (servicing level may differ from the windows-2022 image).
-          - label: vs2026-toolset-14.44
-            runner: windows-2025-vs2026
-            toolset: '14.44'
-          # Newest toolset on the VS 2026 image: does a current compiler still crash?
-          - label: vs2026-toolset-latest
+          # Newest available toolset: red here means the bug is still unfixed.
+          - label: msvc-latest
             runner: windows-2025-vs2026
             toolset: ''
     defaults:
@@ -33,94 +28,26 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up MSVC developer environment
-        id: msvc
-        run: ./scripts/setup-msvc.ps1 -VcVarsVer '${{ matrix.toolset }}' -Label '${{ matrix.label }}'
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vsPath = & $vswhere -latest -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsPath) { throw 'No Visual Studio installation with C++ build tools found' }
+          $before = @{}
+          Get-ChildItem env: | ForEach-Object { $before[$_.Name] = $_.Value }
+          Import-Module (Join-Path $vsPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          $devArgs = '-arch=x64 -host_arch=x64'
+          if ('${{ matrix.toolset }}') { $devArgs += ' -vcvars_ver=${{ matrix.toolset }}' }
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments $devArgs
+          Get-ChildItem env: |
+            Where-Object { $_.Name -ne 'GITHUB_ENV' -and $before[$_.Name] -ne $_.Value } |
+            ForEach-Object { "$($_.Name)=$($_.Value)" } |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Get-Command cl.exe -ErrorAction Stop | Select-Object -ExpandProperty Source
+          cl 2>&1 | Select-Object -First 1
+          exit 0
 
-      # A red step below means cl.exe failed on that file; the step log and the
-      # job summary table say whether it was an internal compiler error.
-      # The workaround file is compiled first as the control: it must stay green
-      # in every lane for the repro lanes to mean anything.
+      - name: 'workaround.cpp — control, must compile'
+        run: cl /nologo /std:c++20 /EHsc /W4 /c workaround.cpp
 
-      - name: 'CONTROL workaround.cpp (default flags)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/workaround.cpp
-
-      - name: 'CONTROL workaround.cpp (/O2 /Zi)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/workaround.cpp -Flags '/O2 /Zi'
-
-      - name: 'REPRO repro_minimal.cpp (default flags)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_minimal.cpp
-
-      - name: 'REPRO repro_minimal.cpp (/O2 /Zi)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_minimal.cpp -Flags '/O2 /Zi'
-
-      - name: 'REPRO repro_full.cpp (default flags)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_full.cpp
-
-      - name: 'REPRO repro_full.cpp (/O2 /Zi)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_full.cpp -Flags '/O2 /Zi'
-
-      # Bisection variants, each isolating one ingredient repro_minimal.cpp
-      # dropped. Default flags only: the crash is in the front end (msc1.cpp)
-      # and run 1 showed optimization level does not matter.
-
-      - name: 'BISECT A repro_fullclass.cpp (full class, plain fn)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_fullclass.cpp
-
-      - name: 'BISECT B repro_lambda.cpp (wrap+lambda, no shadow)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_lambda.cpp
-
-      - name: 'BISECT C repro_shadow.cpp (param named path, plain fn)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_shadow.cpp
-
-      - name: 'BISECT B+C repro_lambda_shadow.cpp (wrap+lambda+shadow)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/repro_lambda_shadow.cpp
-
-      # Round-3 minimizations of the confirmed B+C trigger.
-
-      - name: 'MIN min_iife.cpp (no wrap template, direct lambda call)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/min_iife.cpp
-
-      - name: 'MIN min_if.cpp (if condition instead of switch)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/min_if.cpp
-
-      - name: 'MIN min_expr.cpp (plain expression statement)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/min_expr.cpp
-
-      - name: 'MIN min_noenum.cpp (qualified cases, no using enum)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/min_noenum.cpp
-
-      # Round-4 minimizations: is std::filesystem involved at all?
-
-      - name: 'TINY tiny_nofs.cpp (no filesystem, custom class)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/tiny_nofs.cpp
-
-      - name: 'TINY tiny_fs_empty.cpp (derived class, no status call)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/tiny_fs_empty.cpp
-
-      - name: 'TINY tiny_ref.cpp (by-reference capture)'
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        run: ./scripts/compile.ps1 -Source src/tiny_ref.cpp
-
-      - name: Upload compiler logs
-        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-${{ matrix.label }}
-          path: logs/
-          if-no-files-found: warn
+      - name: 'repro.cpp — a red X here means the ICE is still present'
+        run: cl /nologo /std:c++20 /EHsc /W4 /c repro.cpp
