@@ -65,6 +65,26 @@ jobs:
         if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
         run: ./scripts/compile.ps1 -Source src/repro_full.cpp -Flags '/O2 /Zi'
 
+      # Bisection variants, each isolating one ingredient repro_minimal.cpp
+      # dropped. Default flags only: the crash is in the front end (msc1.cpp)
+      # and run 1 showed optimization level does not matter.
+
+      - name: 'BISECT A repro_fullclass.cpp (full class, plain fn)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_fullclass.cpp
+
+      - name: 'BISECT B repro_lambda.cpp (wrap+lambda, no shadow)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_lambda.cpp
+
+      - name: 'BISECT C repro_shadow.cpp (param named path, plain fn)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_shadow.cpp
+
+      - name: 'BISECT B+C repro_lambda_shadow.cpp (wrap+lambda+shadow)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_lambda_shadow.cpp
+
       - name: Upload compiler logs
         if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
         uses: actions/upload-artifact@v4

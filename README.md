@@ -26,6 +26,35 @@ switch (st.type()) { // fine
 That hoist is the workaround that shipped in the Aegisub PR (see the comment in
 [`libaegisub/lua/modules/lfs.cpp`](https://github.com/TypesettingTools/Aegisub/blob/master/libaegisub/lua/modules/lfs.cpp)).
 
+## Confirmed results (run 1, 2026-08-11)
+
+The ICE **reproduces in CI, in every lane, at both optimization levels** —
+including the newest VS 2026 toolset, so this is not fixed as of MSVC 19.51:
+
+| Lane | Compiler | `workaround.cpp` | `repro_minimal.cpp` | `repro_full.cpp` |
+| --- | --- | --- | --- | --- |
+| `vs2022-toolset-14.44` | cl 19.44.35228 (toolset 14.44.35207) | ✅ | ✅ | 💥 C1001 |
+| `vs2026-toolset-14.44` | toolset 14.44.35207 on the VS 2026 image | ✅ | ✅ | 💥 C1001 |
+| `vs2026-toolset-latest` | cl 19.51.36252 (toolset 14.51.36231) | ✅ | ✅ | 💥 C1001 |
+
+The diagnostic in every failing lane:
+
+```text
+src/repro_full.cpp(122): fatal error C1001: Internal compiler error.
+(compiler file 'msc1.cpp', line 1589)
+```
+
+`msc1.cpp` is the compiler front end, matching the observation that `/Od` vs
+`/O2 /Zi` makes no difference. cl.exe exits with -1073741819 (0xC0000005,
+access violation). Line 122 is the inline switch condition.
+
+Since `repro_minimal.cpp` compiles everywhere, the trigger lives in something
+the reduction dropped. The `src/repro_fullclass.cpp` (A: full class surface),
+`src/repro_lambda.cpp` (B: wrap template + lambda), `src/repro_shadow.cpp`
+(C: parameter named `path` shadowing the class name), and
+`src/repro_lambda_shadow.cpp` (B+C) variants each isolate one suspect
+ingredient.
+
 ## Layout
 
 | File | Contents | Expectation on affected toolsets |
