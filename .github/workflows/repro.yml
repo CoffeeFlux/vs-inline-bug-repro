@@ -1,0 +1,74 @@
+name: MSVC ICE repro
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  repro:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The toolset the ICE was reported against: VS 2022 17.14 / MSVC 19.44.
+          - label: vs2022-toolset-14.44
+            runner: windows-2022
+            toolset: '14.44'
+          # Same 14.44 toolset family as shipped on the VS 2026 image
+          # (servicing level may differ from the windows-2022 image).
+          - label: vs2026-toolset-14.44
+            runner: windows-2025-vs2026
+            toolset: '14.44'
+          # Newest toolset on the VS 2026 image: does a current compiler still crash?
+          - label: vs2026-toolset-latest
+            runner: windows-2025-vs2026
+            toolset: ''
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC developer environment
+        id: msvc
+        run: ./scripts/setup-msvc.ps1 -VcVarsVer '${{ matrix.toolset }}' -Label '${{ matrix.label }}'
+
+      # A red step below means cl.exe failed on that file; the step log and the
+      # job summary table say whether it was an internal compiler error.
+      # The workaround file is compiled first as the control: it must stay green
+      # in every lane for the repro lanes to mean anything.
+
+      - name: 'CONTROL workaround.cpp (default flags)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/workaround.cpp
+
+      - name: 'CONTROL workaround.cpp (/O2 /Zi)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/workaround.cpp -Flags '/O2 /Zi'
+
+      - name: 'REPRO repro_minimal.cpp (default flags)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_minimal.cpp
+
+      - name: 'REPRO repro_minimal.cpp (/O2 /Zi)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_minimal.cpp -Flags '/O2 /Zi'
+
+      - name: 'REPRO repro_full.cpp (default flags)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_full.cpp
+
+      - name: 'REPRO repro_full.cpp (/O2 /Zi)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/repro_full.cpp -Flags '/O2 /Zi'
+
+      - name: Upload compiler logs
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.label }}
+          path: logs/
+          if-no-files-found: warn
