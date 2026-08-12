@@ -103,6 +103,20 @@ jobs:
         if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
         run: ./scripts/compile.ps1 -Source src/min_noenum.cpp
 
+      # Round-4 minimizations: is std::filesystem involved at all?
+
+      - name: 'TINY tiny_nofs.cpp (no filesystem, custom class)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/tiny_nofs.cpp
+
+      - name: 'TINY tiny_fs_empty.cpp (derived class, no status call)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/tiny_fs_empty.cpp
+
+      - name: 'TINY tiny_ref.cpp (by-reference capture)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/tiny_ref.cpp
+
       - name: Upload compiler logs
         if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
         uses: actions/upload-artifact@v4
