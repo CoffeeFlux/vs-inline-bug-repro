@@ -14,6 +14,9 @@ repro.cpp(22): fatal error C1001: Internal compiler error.
 (compiler file 'msc1.cpp', line 1589)
 ```
 
+(Toolset 14.51 reports the same crash as `msc1.cpp` line 1672 — the front-end
+source drifted between versions.)
+
 cl.exe exits with -1073741819 (0xC0000005, access violation). From an
 *x64 Native Tools Command Prompt*:
 
