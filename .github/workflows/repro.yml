@@ -85,6 +85,24 @@ jobs:
         if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
         run: ./scripts/compile.ps1 -Source src/repro_lambda_shadow.cpp
 
+      # Round-3 minimizations of the confirmed B+C trigger.
+
+      - name: 'MIN min_iife.cpp (no wrap template, direct lambda call)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/min_iife.cpp
+
+      - name: 'MIN min_if.cpp (if condition instead of switch)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/min_if.cpp
+
+      - name: 'MIN min_expr.cpp (plain expression statement)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/min_expr.cpp
+
+      - name: 'MIN min_noenum.cpp (qualified cases, no using enum)'
+        if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
+        run: ./scripts/compile.ps1 -Source src/min_noenum.cpp
+
       - name: Upload compiler logs
         if: ${{ !cancelled() && steps.msvc.outcome == 'success' }}
         uses: actions/upload-artifact@v4
