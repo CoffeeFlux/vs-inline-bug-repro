@@ -1,94 +1,128 @@
 # vs-inline-bug-repro
 
-Standalone reproduction attempt for an MSVC internal compiler error hit while
-fixing a Unicode path bug in Aegisub:
+Standalone reproduction of an MSVC internal compiler error hit while fixing a
+Unicode path bug in Aegisub:
 [TypesettingTools/Aegisub#666](https://github.com/TypesettingTools/Aegisub/pull/666).
+
+**Status: reproduced and minimized.** The ICE fires in every tested toolset,
+including the newest VS 2026 compiler — it is not fixed as of MSVC 19.51.
 
 ## The bug
 
 With a class derived from `std::filesystem::path` (Aegisub's UTF-8-converting
-`agi::fs::path`), MSVC 19.44 (Visual Studio 2022 17.14, toolset 14.44)
-reportedly crashes with an internal compiler error when the conversion,
-`std::filesystem::status()` call, and `.type()` call are written inline in a
-switch condition:
+`agi::fs::path`), MSVC crashes with `fatal error C1001` when a
+`std::filesystem::status()` call on an inline-constructed temporary appears in
+an `if`/`switch` **condition** inside a **lambda** whose enclosing function has
+a **parameter named `path`** — the same name as the class, which the captured
+variable shadows inside `agi::fs::path(path)`:
 
 ```cpp
-switch (sfs::status(agi::fs::path(path)).type()) { // ICE in MSVC 19.44
+switch (sfs::status(agi::fs::path(path)).type()) { // C1001
 ```
 
-Hoisting the call into a local variable avoids the crash:
+The diagnostic, identical on every affected toolset:
+
+```text
+fatal error C1001: Internal compiler error.
+(compiler file 'msc1.cpp', line 1589)
+```
+
+`msc1.cpp` is the compiler front end; cl.exe dies with exit code -1073741819
+(0xC0000005, access violation). Optimization level is irrelevant.
+
+Hoisting the call into a local variable — the fix that shipped in the Aegisub
+PR — avoids the crash:
 
 ```cpp
 auto st = sfs::status(agi::fs::path(path));
 switch (st.type()) { // fine
 ```
 
-That hoist is the workaround that shipped in the Aegisub PR (see the comment in
-[`libaegisub/lua/modules/lfs.cpp`](https://github.com/TypesettingTools/Aegisub/blob/master/libaegisub/lua/modules/lfs.cpp)).
+## Minimal reproducer
 
-## Confirmed results (run 1, 2026-08-11)
+`src/min_iife.cpp`, 26 lines, crashes cl 19.44 through 19.51:
 
-The ICE **reproduces in CI, in every lane, at both optimization levels** —
-including the newest VS 2026 toolset, so this is not fixed as of MSVC 19.51:
+```cpp
+#include <filesystem>
 
-| Lane | Compiler | `workaround.cpp` | `repro_minimal.cpp` | `repro_full.cpp` |
-| --- | --- | --- | --- | --- |
-| `vs2022-toolset-14.44` | cl 19.44.35228 (toolset 14.44.35207) | ✅ | ✅ | 💥 C1001 |
-| `vs2026-toolset-14.44` | toolset 14.44.35207 on the VS 2026 image | ✅ | ✅ | 💥 C1001 |
-| `vs2026-toolset-latest` | cl 19.51.36252 (toolset 14.51.36231) | ✅ | ✅ | 💥 C1001 |
+namespace sfs = std::filesystem;
 
-The diagnostic in every failing lane:
+namespace agi::fs {
+class path : public sfs::path {
+public:
+	path(const char *c_str) : sfs::path(reinterpret_cast<const char8_t *>(c_str)) {}
+};
+}
 
-```text
-src/repro_full.cpp(122): fatal error C1001: Internal compiler error.
-(compiler file 'msc1.cpp', line 1589)
+const char *get_mode(const char *path) {
+	return [=]() -> const char * {
+		using enum sfs::file_type;
+		switch (sfs::status(agi::fs::path(path)).type()) {
+			case not_found: return nullptr;
+			case regular:   return "file";
+			case directory: return "directory";
+			default:        return "other";
+		}
+	}();
+}
 ```
 
-`msc1.cpp` is the compiler front end, matching the observation that `/Od` vs
-`/O2 /Zi` makes no difference. cl.exe exits with -1073741819 (0xC0000005,
-access violation). Line 122 is the inline switch condition.
+## Confirmed results
 
-Since `repro_minimal.cpp` compiles everywhere, the trigger lives in something
-the reduction dropped. The `src/repro_fullclass.cpp` (A: full class surface),
-`src/repro_lambda.cpp` (B: wrap template + lambda), `src/repro_shadow.cpp`
-(C: parameter named `path` shadowing the class name), and
-`src/repro_lambda_shadow.cpp` (B+C) variants each isolate one suspect
-ingredient.
+Three CI lanes, all agreeing on every variant across four runs:
 
-## Layout
+| Lane | Compiler |
+| --- | --- |
+| `vs2022-toolset-14.44` | cl 19.44.35228, toolset 14.44.35207 (VS 2022 17.14 image) |
+| `vs2026-toolset-14.44` | toolset 14.44.35207 as installed on the VS 2026 image |
+| `vs2026-toolset-latest` | cl 19.51.36252, toolset 14.51.36231 (VS 2026) |
 
-| File | Contents | Expectation on affected toolsets |
+Ingredient analysis — each variant differs from the crashing shape in exactly
+the listed way:
+
+| Variant | Isolates | Result |
 | --- | --- | --- |
-| `src/repro_full.cpp` | Near-verbatim copy of the Aegisub code shape: the real `agi::fs::path` class, the `wrap()` error-trampoline template, the `[=]` lambda, `using enum`, and the inline switch condition | 💥 fatal error C1001 |
-| `src/repro_minimal.cpp` | Reduced version: minimal derived class, plain function, inline switch condition | Unknown — tells us how small the trigger is |
-| `src/workaround.cpp` | Identical to `repro_full.cpp` except the `status()` call is hoisted into a local (the merged fix) | ✅ compiles (control) |
+| `repro_full.cpp` | near-verbatim Aegisub shape (line 122 = the switch condition) | 💥 C1001 |
+| `workaround.cpp` | same, but `status()` hoisted into a local (the shipped fix) | ✅ |
+| `repro_minimal.cpp` | no lambda, no shadowing, minimal class | ✅ |
+| `repro_fullclass.cpp` | full class surface alone (plain function, no shadow) | ✅ |
+| `repro_lambda.cpp` | wrap template + lambda alone (no shadow) | ✅ |
+| `repro_shadow.cpp` | `path` parameter shadowing the class name alone (no lambda) | ✅ |
+| `repro_lambda_shadow.cpp` | lambda + shadowing combined | 💥 C1001 |
+| `min_iife.cpp` | drops the `wrap()` template — lambda invoked directly | 💥 C1001 |
+| `min_if.cpp` | `if` condition instead of `switch` | 💥 C1001 |
+| `min_expr.cpp` | same expression as a discarded expression statement | ✅ |
+| `min_noenum.cpp` | qualified case labels, no `using enum` | 💥 C1001 |
+| `tiny_ref.cpp` | `[&]` capture instead of `[=]` | 💥 C1001 |
+| `tiny_fs_empty.cpp` | `.empty()` on the temporary — no `status()` call | ✅ |
+| `tiny_nofs.cpp` | no `<filesystem>` — structurally identical custom class | ✅ |
 
-## CI matrix
+Every ingredient below is required; removing any one of them makes the file
+compile:
 
-`.github/workflows/repro.yml` compiles each file with
-`cl /std:c++20 /EHsc /W4 /c`, at both default optimization and `/O2 /Zi`
-(Aegisub builds as meson `debugoptimized`), across:
+1. **A lambda** (capture mode irrelevant; a plain function is fine).
+2. **A condition context** — `if` or `switch`. The same full expression as a
+   plain expression statement or a declaration's initializer is fine.
+3. **The nested call shape** `sfs::status(agi::fs::path(path)).type()` with
+   the class derived from `std::filesystem::path` and its name shadowed by the
+   captured variable. Calling a member directly on the temporary instead of
+   passing it through `status()` is fine, and a structurally identical custom
+   class with no `<filesystem>` involvement is fine.
 
-| Lane | Runner | Toolset |
-| --- | --- | --- |
-| `vs2022-toolset-14.44` | `windows-2022` (VS 2022 17.14) | 14.44 — the reported ICE toolset |
-| `vs2026-toolset-14.44` | `windows-2025-vs2026` | 14.44 as serviced on the VS 2026 image |
-| `vs2026-toolset-latest` | `windows-2025-vs2026` | newest installed toolset |
+## CI
 
-A red compile step means `cl.exe` failed on that file in that lane; the step
-log and the job summary table state whether the failure was an internal
-compiler error. `workaround.cpp` is the control and must stay green everywhere.
-Full compiler output is uploaded as a `logs-<lane>` artifact.
-
-Note that a green run does **not** prove the original report wrong: MSVC
-servicing releases within the 19.44 family differ, and the ICE may depend on
-compiler state that this reduction fails to retain.
+`.github/workflows/repro.yml` compiles every variant with
+`cl /std:c++20 /EHsc /W4 /c` (the original repro/workaround pair additionally
+at `/O2 /Zi`; Aegisub builds as meson `debugoptimized`). A red step means
+cl.exe failed on that file; the job summary table on each run classifies each
+failure as ICE or ordinary error, and full compiler output is uploaded as a
+`logs-<lane>` artifact.
 
 ## Reproducing locally
 
 From an *x64 Native Tools Command Prompt for VS 2022*:
 
 ```bat
-cl /nologo /std:c++20 /EHsc /W4 /c src\repro_full.cpp
-cl /nologo /std:c++20 /EHsc /W4 /c src\workaround.cpp
+cl /nologo /std:c++20 /EHsc /W4 /c src\min_iife.cpp     &:: crashes
+cl /nologo /std:c++20 /EHsc /W4 /c src\workaround.cpp   &:: compiles
 ```
