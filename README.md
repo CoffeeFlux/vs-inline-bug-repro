@@ -6,8 +6,10 @@ fixing a Unicode path bug in Aegisub:
 
 ## The bug
 
-[`repro.cpp`](repro.cpp) crashes cl 19.44.35228 (VS 2022 17.14, toolset 14.44)
-through cl 19.51.36252 (VS 2026, toolset 14.51), at any optimization level:
+[`repro.cpp`](repro.cpp) crashes the compiler, at any optimization level. The
+ICE was originally hit on cl 19.44.35228 (VS 2022 17.14, toolset 14.44) and is
+still present in the latest compiler, cl 19.51.36252 (VS 2026, toolset 14.51);
+older toolsets have not been tested.
 
 ```text
 repro.cpp(22): fatal error C1001: Internal compiler error.

@@ -1,7 +1,8 @@
 // Crashes the MSVC front end: fatal error C1001 (compiler file 'msc1.cpp',
 // line 1589), cl.exe exiting with 0xC0000005. Reproduced on cl 19.44.35228
-// (VS 2022 17.14, toolset 14.44) through cl 19.51.36252 (VS 2026, toolset
-// 14.51) with `cl /std:c++20 /EHsc /c repro.cpp` at any optimization level.
+// (VS 2022 17.14, toolset 14.44) and on the latest cl 19.51.36252 (VS 2026,
+// toolset 14.51) with `cl /std:c++20 /EHsc /c repro.cpp` at any optimization
+// level.
 //
 // Found in https://github.com/TypesettingTools/Aegisub/pull/666.
 
